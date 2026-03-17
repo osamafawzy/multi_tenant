@@ -2,6 +2,10 @@ name: news-tenant
 additional_hostnames:
   - alpha.news-tenant
   - beta.news-tenant
+  - gamma.news-tenant
+  - delta.news-tenant
+  - omega.news-tenant
+  - sigma.news-tenant
 type: laravel
 docroot: public
 php_version: "8.3"

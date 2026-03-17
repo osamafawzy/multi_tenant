@@ -5,45 +5,61 @@ namespace Database\Seeders;
 use Illuminate\Database\Seeder;
 use App\Models\Tenant;
 use Modules\News\App\Models\News;
+use Illuminate\Support\Facades\DB;
 
 class TenantSeeder extends Seeder
 {
+    protected array $tenantDbs = ['shared_db_1', 'shared_db_2', 'shared_db_3'];
+
     public function run(): void
     {
-        // ── Tenant 1: Alpha ──────────────────────────────────
-        $alpha = Tenant::create(['id' => 'alpha']);
-        $alpha->domains()->create(['domain' => 'alpha.news-tenant.ddev.site']);
+        // Step 1: Drop all tenant DBs cleanly before starting
+        foreach ($this->tenantDbs as $db) {
+            DB::statement("DROP DATABASE IF EXISTS `{$db}`");
+        }
 
-        tenancy()->initialize($alpha);
+        $groups = [
+            'shared_db_1' => ['alpha', 'beta'],
+            'shared_db_2' => ['gamma', 'delta'],
+            'shared_db_3' => ['omega', 'sigma'],
+        ];
 
-        News::create([
-            'title'       => 'Alpha First News',
-            'description' => 'This is the first news article for Alpha tenant.',
-        ]);
+        foreach ($groups as $dbName => $tenantIds) {
+            $isFirstTenant = true;
 
-        News::create([
-            'title'       => 'Alpha Second News',
-            'description' => 'This is the second news article for Alpha tenant.',
-        ]);
+            foreach ($tenantIds as $id) {
+                $tenant = Tenant::create([
+                    'id'              => $id,
+                    'tenancy_db_name' => $dbName,
+                ]);
 
-        tenancy()->end();
+                $tenant->domains()->create([
+                    'domain' => "{$id}.news-tenant.ddev.site",
+                ]);
 
-        // ── Tenant 2: Beta ───────────────────────────────────
-        $beta = Tenant::create(['id' => 'beta']);
-        $beta->domains()->create(['domain' => 'beta.news-tenant.ddev.site']);
+                if ($isFirstTenant) {
+                    // Create DB and migrate ONCE per group
+                    $tenant->database()->manager()->createDatabase($tenant);
+                    \Artisan::call('tenants:migrate', ['--tenants' => [$id]]);
+                    $isFirstTenant = false;
+                }
+                // Second tenant skips DB creation & migration ✅
 
-        tenancy()->initialize($beta);
+                // Seed news scoped to this tenant
+                tenancy()->initialize($tenant);
 
-        News::create([
-            'title'       => 'Beta First News',
-            'description' => 'This is the first news article for Beta tenant.',
-        ]);
+                News::create([
+                    'title'       => ucfirst($id) . ' First News',
+                    'description' => 'First news article for ' . ucfirst($id),
+                ]);
 
-        News::create([
-            'title'       => 'Beta Second News',
-            'description' => 'This is the second news article for Beta tenant.',
-        ]);
+                News::create([
+                    'title'       => ucfirst($id) . ' Second News',
+                    'description' => 'Second news article for ' . ucfirst($id),
+                ]);
 
-        tenancy()->end();
+                tenancy()->end();
+            }
+        }
     }
 }
