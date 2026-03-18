@@ -22,8 +22,8 @@ foreach (config('tenancy.central_domains') as $domain) {
 
 Route::middleware([
     'web',
-    \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
-    \Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains::class,
+//    \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
+//    \Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains::class,
 ])->group(function () {
     Route::resource('news', NewsController::class)->names('news');
 });

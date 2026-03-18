@@ -6,9 +6,14 @@ use Illuminate\Pagination\LengthAwarePaginator;
 
 class NewsService
 {
-    public function getAll(): LengthAwarePaginator
+    public function getAll()
     {
-        return News::latest()->paginate(15);
+        if (app()->has('currentTenant')) {
+            return News::latest()->paginate(15); // scoped by global scope
+        }
+
+        // Central domain — return all news without scope
+        return News::withoutGlobalScope('tenant')->latest()->paginate(15);
     }
 
     public function findById(int $id): News

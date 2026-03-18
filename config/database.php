@@ -63,6 +63,20 @@ return [
             ]) : [],
         ],
 
+        'tenant' => [
+            'driver'    => 'mysql',
+            'host'      => env('DB_HOST', 'db'),
+            'port'      => env('DB_PORT', '3306'),
+            'database'  => '', // 👈 will be set dynamically
+            'username'  => env('DB_USERNAME', 'db'),
+            'password'  => env('DB_PASSWORD', 'db'),
+            'charset'   => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix'    => '',
+            'strict'    => true,
+            'engine'    => null,
+        ],
+
         'pgsql' => [
             'driver' => 'pgsql',
             'url' => env('DATABASE_URL'),

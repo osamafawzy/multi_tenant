@@ -100,9 +100,9 @@ class TenancyServiceProvider extends ServiceProvider
     public function boot()
     {
         $this->bootEvents();
-        $this->mapRoutes();
+//        $this->mapRoutes();
 
-        $this->makeTenancyMiddlewareHighestPriority();
+//        $this->makeTenancyMiddlewareHighestPriority();
     }
 
     protected function bootEvents()
@@ -134,9 +134,9 @@ class TenancyServiceProvider extends ServiceProvider
             // Even higher priority than the initialization middleware
             Middleware\PreventAccessFromCentralDomains::class,
 
-            Middleware\InitializeTenancyByDomain::class,
-            Middleware\InitializeTenancyBySubdomain::class,
-            Middleware\InitializeTenancyByDomainOrSubdomain::class,
+//            Middleware\InitializeTenancyByDomain::class,
+//            Middleware\InitializeTenancyBySubdomain::class,
+//            Middleware\InitializeTenancyByDomainOrSubdomain::class,
             Middleware\InitializeTenancyByPath::class,
             Middleware\InitializeTenancyByRequestData::class,
         ];

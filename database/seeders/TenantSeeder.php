@@ -49,11 +49,13 @@ class TenantSeeder extends Seeder
                 tenancy()->initialize($tenant);
 
                 News::create([
+                    'tenant_id' => $tenant->id,
                     'title'       => ucfirst($id) . ' First News',
                     'description' => 'First news article for ' . ucfirst($id),
                 ]);
 
                 News::create([
+                    'tenant_id' => $tenant->id,
                     'title'       => ucfirst($id) . ' Second News',
                     'description' => 'Second news article for ' . ucfirst($id),
                 ]);

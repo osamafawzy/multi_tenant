@@ -20,8 +20,8 @@ use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
 
 Route::middleware([
     'web',
-    \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
-    \Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains::class,
+//    \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
+//    \Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains::class,
 ])->group(function () {
     Route::apiResource('news', \Modules\News\App\Http\Controllers\NewsController::class);
 });
