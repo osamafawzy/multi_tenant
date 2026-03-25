@@ -16,3 +16,7 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return view('welcome');
 });
+
+// Stable Google callback path used by OAuth provider settings.
+Route::get('/auth/oauth/callback', [\App\Http\Controllers\AuthController::class, 'handleGoogleOAuthCallback'])
+    ->name('auth.oauth.google.callback');
