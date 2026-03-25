@@ -13,7 +13,7 @@ use RuntimeException;
 
 class AppleOAuthProvider
 {
-    public function authorizationUrl(string $state): string
+    public function authorizationUrl(string $state, string $nonce): string
     {
         return 'https://appleid.apple.com/auth/authorize?' . http_build_query([
             'client_id' => (string) config('services.apple.client_id'),
@@ -21,6 +21,7 @@ class AppleOAuthProvider
             'response_type' => 'code',
             'scope' => 'email name',
             'state' => $state,
+            'nonce' => $nonce,
             'response_mode' => 'form_post',
         ]);
     }
@@ -82,7 +83,7 @@ class AppleOAuthProvider
      * @param array<string, mixed> $tokens
      * @return array{id: string, email: string|null, name: string, email_verified: bool}|null
      */
-    public function extractUserData(array $tokens): ?array
+    public function extractUserData(array $tokens, string $expectedNonce, ?array $userPayload = null): ?array
     {
         $idToken = $tokens['id_token'] ?? null;
         if (!is_string($idToken) || $idToken === '') {
@@ -106,17 +107,65 @@ class AppleOAuthProvider
                 return null;
             }
 
+            if (!$this->hasValidNonceClaim($payload, $expectedNonce)) {
+                throw new RuntimeException('invalid_state');
+            }
+
+            $idTokenEmail = property_exists($payload, 'email') ? trim((string) $payload->email) : '';
+            $fallbackEmail = $this->extractEmailFromUserPayload($userPayload);
+            $idTokenName = property_exists($payload, 'name') ? trim((string) $payload->name) : '';
+            $fallbackName = $this->extractNameFromUserPayload($userPayload);
+
             return [
                 'id' => (string) $payload->sub,
-                'email' => property_exists($payload, 'email') ? (string) $payload->email : null,
-                'name' => 'Apple User',
+                'email' => $idTokenEmail !== '' ? $idTokenEmail : $fallbackEmail,
+                'name' => $idTokenName !== '' ? $idTokenName : ($fallbackName ?? 'Apple User'),
                 'email_verified' => property_exists($payload, 'email_verified')
                     ? filter_var($payload->email_verified, FILTER_VALIDATE_BOOL)
                     : false,
             ];
+        } catch (RuntimeException $exception) {
+            if ($exception->getMessage() === 'invalid_state') {
+                throw $exception;
+            }
+
+            return null;
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function extractEmailFromUserPayload(?array $userPayload): ?string
+    {
+        $email = $userPayload['email'] ?? null;
+        if (!is_string($email)) {
+            return null;
+        }
+
+        $normalized = trim($email);
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    private function extractNameFromUserPayload(?array $userPayload): ?string
+    {
+        $nameNode = $userPayload['name'] ?? null;
+
+        if (is_string($nameNode)) {
+            $normalized = trim($nameNode);
+
+            return $normalized !== '' ? $normalized : null;
+        }
+
+        if (!is_array($nameNode)) {
+            return null;
+        }
+
+        $firstName = is_string($nameNode['firstName'] ?? null) ? trim($nameNode['firstName']) : '';
+        $lastName = is_string($nameNode['lastName'] ?? null) ? trim($nameNode['lastName']) : '';
+        $fullName = trim($firstName . ' ' . $lastName);
+
+        return $fullName !== '' ? $fullName : null;
     }
 
     /**
@@ -233,7 +282,11 @@ class AppleOAuthProvider
         $audienceClaim = property_exists($payload, 'aud') ? $payload->aud : null;
         $expectedAudience = (string) config('services.apple.client_id');
 
-        if ($issuer !== 'https://appleid.apple.com' || $subject === '' || $expiresAt <= now()->timestamp) {
+        if (
+            $issuer !== 'https://appleid.apple.com'
+            || $subject === ''
+            || $expiresAt <= now()->timestamp
+        ) {
             return false;
         }
 
@@ -250,6 +303,13 @@ class AppleOAuthProvider
         }
 
         return false;
+    }
+
+    private function hasValidNonceClaim(object $payload, string $expectedNonce): bool
+    {
+        $nonce = property_exists($payload, 'nonce') ? (string) $payload->nonce : '';
+
+        return $expectedNonce !== '' && $nonce !== '' && hash_equals($expectedNonce, $nonce);
     }
 
 }

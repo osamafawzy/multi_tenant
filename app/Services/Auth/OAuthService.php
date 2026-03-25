@@ -24,11 +24,11 @@ class OAuthService
     public function getOAuthLinks(?string $returnUrl = null): array
     {
         $resolvedReturnUrl = $this->resolveReturnUrl($returnUrl);
-        $state = $this->createState($resolvedReturnUrl);
+        $stateData = $this->createState($resolvedReturnUrl);
 
         return [
-            'google_url' => $this->googleOAuthProvider->authorizationUrl($state),
-            'apple_url' => $this->appleOAuthProvider->authorizationUrl($state),
+            'google_url' => $this->googleOAuthProvider->authorizationUrl($stateData['state']),
+            'apple_url' => $this->appleOAuthProvider->authorizationUrl($stateData['state'], $stateData['nonce']),
         ];
     }
 
@@ -36,50 +36,62 @@ class OAuthService
     {
         if ($this->hasProviderDeclined($payload)) {
             $stateData = $this->consumeState((string) ($payload['state'] ?? ''));
-            $returnUrl = $stateData['return_url'] ?? null;
+            if ($stateData === null) {
+                return $this->errorResult('invalid_state');
+            }
 
-            return $this->errorResult($provider, 'provider_declined', $returnUrl);
+            return $this->errorResult('provider_declined');
         }
 
         $code = (string) ($payload['code'] ?? '');
         $stateData = $this->consumeState((string) ($payload['state'] ?? ''));
 
         if ($stateData === null) {
-            return $this->errorResult($provider, 'invalid_state');
+            return $this->errorResult('invalid_state');
         }
 
         if ($code === '') {
-            return $this->errorResult($provider, 'invalid_response');
+            return $this->errorResult('invalid_response');
         }
 
         try {
             $tokens = $this->exchangeCodeForTokens($provider, $code);
-            $userData = $this->extractUserData($provider, $tokens);
+            $userData = $this->extractUserData($provider, $tokens, $stateData, $payload);
 
             if (!$userData) {
-                return $this->errorResult($provider, 'invalid_user');
+                return $this->errorResult('invalid_user');
             }
 
             $user = $this->findOrCreateUser($userData, $provider);
             $accessToken = $user->createToken('auth_token')->plainTextToken;
-            $returnUrl = (string) ($stateData['return_url'] ?? config('app.frontend_url'));
 
             return [
                 'success' => true,
-                'provider' => $provider,
-                'redirect_url' => $this->buildUrlWithFragment($returnUrl, [
+                'data' => [
                     'token' => $accessToken,
                     'provider' => $provider,
-                ]),
-                'error_code' => null,
+                    'user' => $user,
+                ],
+                'error' => null,
             ];
+        } catch (RuntimeException $exception) {
+            if ($exception->getMessage() === 'invalid_state') {
+                return $this->errorResult('invalid_state');
+            }
+
+            Log::error('OAuth callback runtime error', [
+                'provider' => $provider,
+                'exception' => $exception::class,
+            ]);
+
+            return $this->errorResult('server_error');
         } catch (\Throwable $exception) {
             Log::error('OAuth callback error', [
                 'provider' => $provider,
                 'exception' => $exception::class,
             ]);
 
-            return $this->errorResult($provider, 'server_error');
+            return $this->errorResult('server_error');
         }
     }
 
@@ -97,13 +109,18 @@ class OAuthService
 
     /**
      * @param array<string, mixed> $tokens
+     * @param array{id: string, iat: int, exp: int, return_url: string, nonce: string} $stateData
      * @return array{id: string, email: string|null, name: string, email_verified: bool}|null
      */
-    private function extractUserData(string $provider, array $tokens): ?array
+    private function extractUserData(string $provider, array $tokens, array $stateData, array $callbackPayload): ?array
     {
         return match ($provider) {
             'google' => $this->googleOAuthProvider->extractUserData($tokens),
-            'apple' => $this->appleOAuthProvider->extractUserData($tokens),
+            'apple' => $this->appleOAuthProvider->extractUserData(
+                $tokens,
+                $stateData['nonce'],
+                is_array($callbackPayload['user_payload'] ?? null) ? $callbackPayload['user_payload'] : null,
+            ),
             default => null,
         };
     }
@@ -132,7 +149,7 @@ class OAuthService
             $user = User::query()->create([
                 'name' => $userData['name'] ?: 'User',
                 'email' => $userData['email'],
-                'password' => Hash::make('123456'),
+                'password' => Hash::make(Str::random(64)),
                 $providerId => $userData['id'],
             ]);
         }
@@ -140,26 +157,16 @@ class OAuthService
         return $user;
     }
 
-    private function errorResult(string $provider, string $errorCode, ?string $returnUrl = null): array
+    private function errorResult(string $errorCode): array
     {
-        $errorUrl = $this->resolveErrorUrl($returnUrl);
-
         return [
             'success' => false,
-            'provider' => $provider,
-            'redirect_url' => $this->buildUrlWithFragment($errorUrl, [
-                'message' => $errorCode,
-                'provider' => $provider,
-            ]),
-            'error_code' => $errorCode,
+            'data' => null,
+            'error' => [
+                'code' => $errorCode,
+                'message' => $this->errorMessage($errorCode),
+            ],
         ];
-    }
-
-    private function buildUrlWithFragment(string $baseUrl, array $fragmentData): string
-    {
-        $fragment = http_build_query($fragmentData);
-
-        return strtok($baseUrl, '#') . '#' . $fragment;
     }
 
     private function hasProviderDeclined(array $payload): bool
@@ -169,17 +176,22 @@ class OAuthService
         return is_string($error) && $error !== '';
     }
 
-    private function createState(string $returnUrl): string
+    /**
+     * @return array{state: string, nonce: string}
+     */
+    private function createState(string $returnUrl): array
     {
         $issuedAt = now()->timestamp;
         $expiresAt = now()->addMinutes(10)->timestamp;
         $stateId = (string) Str::uuid();
+        $nonce = Str::random(64);
 
         $payload = [
             'id' => $stateId,
             'iat' => $issuedAt,
             'exp' => $expiresAt,
             'return_url' => $returnUrl,
+            'nonce' => $nonce,
         ];
 
         $encodedPayload = $this->encodeStatePayload($payload);
@@ -192,11 +204,14 @@ class OAuthService
             now()->addSeconds(max(1, $expiresAt - $issuedAt)),
         );
 
-        return $state;
+        return [
+            'state' => $state,
+            'nonce' => $nonce,
+        ];
     }
 
     /**
-     * @return array{id: string, iat: int, exp: int, return_url: string}|null
+     * @return array{id: string, iat: int, exp: int, return_url: string, nonce: string}|null
      */
     private function consumeState(string $state): ?array
     {
@@ -227,6 +242,8 @@ class OAuthService
             || !is_int($payload['iat'] ?? null)
             || !is_int($payload['exp'] ?? null)
             || !is_string($payload['return_url'] ?? null)
+            || !is_string($payload['nonce'] ?? null)
+            || strlen($payload['nonce']) < 32
         ) {
             return null;
         }
@@ -272,7 +289,7 @@ class OAuthService
     }
 
     /**
-     * @param array{id: string, iat: int, exp: int, return_url: string} $payload
+     * @param array{id: string, iat: int, exp: int, return_url: string, nonce: string} $payload
      */
     private function encodeStatePayload(array $payload): string
     {
@@ -293,15 +310,6 @@ class OAuthService
         return $candidate;
     }
 
-    private function resolveErrorUrl(?string $returnUrl = null): string
-    {
-        if ($returnUrl && $this->isAllowedReturnUrl($returnUrl)) {
-            return $returnUrl;
-        }
-
-        return (string) config('app.frontend_url') . '/auth/error';
-    }
-
     private function isAllowedReturnUrl(string $url): bool
     {
         $allowedFrontend = (string) config('app.frontend_url');
@@ -320,11 +328,11 @@ class OAuthService
 
         $candidateScheme = strtolower((string) ($candidate['scheme'] ?? ''));
         $candidateHost = strtolower((string) ($candidate['host'] ?? ''));
-        $candidatePort = $candidate['port'] ?? null;
+        $candidatePort = $this->normalizeOriginPort($candidateScheme, $candidate['port'] ?? null);
 
         $allowedScheme = strtolower((string) ($allowed['scheme'] ?? ''));
         $allowedHost = strtolower((string) ($allowed['host'] ?? ''));
-        $allowedPort = $allowed['port'] ?? null;
+        $allowedPort = $this->normalizeOriginPort($allowedScheme, $allowed['port'] ?? null);
 
         if ($candidateScheme === '' || $candidateHost === '' || $allowedScheme === '' || $allowedHost === '') {
             return false;
@@ -333,5 +341,33 @@ class OAuthService
         return $candidateScheme === $allowedScheme
             && $candidateHost === $allowedHost
             && $candidatePort === $allowedPort;
+    }
+
+    private function errorMessage(string $errorCode): string
+    {
+        return match ($errorCode) {
+            'provider_declined' => 'OAuth provider declined the authorization request.',
+            'invalid_state' => 'OAuth state is invalid or expired.',
+            'invalid_response' => 'OAuth provider response is missing required data.',
+            'invalid_user' => 'Unable to resolve a valid user from OAuth provider data.',
+            default => 'Unexpected OAuth callback failure.',
+        };
+    }
+
+    private function normalizeOriginPort(string $scheme, mixed $port): ?int
+    {
+        if (is_int($port)) {
+            return $port;
+        }
+
+        if (is_string($port) && is_numeric($port)) {
+            return (int) $port;
+        }
+
+        return match (strtolower($scheme)) {
+            'http' => 80,
+            'https' => 443,
+            default => null,
+        };
     }
 }

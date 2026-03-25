@@ -20,4 +20,5 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 Route::post('/auth/oauth-links', [\App\Http\Controllers\AuthController::class, 'getOAuthLinks']);
 Route::post('/auth/oauth/callback/apple', [\App\Http\Controllers\AuthController::class, 'handleAppleOAuthCallback'])
+    ->middleware('oauth.callback.json_nocache')
     ->name('auth.oauth.apple.callback');

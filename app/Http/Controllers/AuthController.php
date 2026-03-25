@@ -9,7 +9,6 @@ use App\Http\Requests\Auth\OAuthCallbackRequest;
 use App\Http\Resources\Auth\OAuthCallbackResultResource;
 use App\Http\Resources\Auth\OAuthLinksResource;
 use App\Services\Auth\OAuthService;
-use Illuminate\Http\RedirectResponse;
 
 class AuthController extends Controller
 {
@@ -29,24 +28,35 @@ class AuthController extends Controller
         ]);
     }
 
-    public function handleGoogleOAuthCallback(OAuthCallbackRequest $request): RedirectResponse|OAuthCallbackResultResource
+    public function handleGoogleOAuthCallback(OAuthCallbackRequest $request): OAuthCallbackResultResource
     {
         return $this->handleCallback($request, 'google');
     }
 
-    public function handleAppleOAuthCallback(OAuthCallbackRequest $request): RedirectResponse|OAuthCallbackResultResource
+    public function handleAppleOAuthCallback(OAuthCallbackRequest $request): OAuthCallbackResultResource
     {
         return $this->handleCallback($request, 'apple');
     }
 
-    private function handleCallback(OAuthCallbackRequest $request, string $provider): RedirectResponse|OAuthCallbackResultResource
+    private function handleCallback(OAuthCallbackRequest $request, string $provider): OAuthCallbackResultResource
     {
         $result = $this->oAuthService->handleProviderCallback($request->validated(), $provider);
 
-        if (!$request->expectsJson()) {
-            return redirect()->to((string) $result['redirect_url']);
+        return (new OAuthCallbackResultResource($result))
+            ->withStatusCode($this->resolveCallbackStatusCode($result))
+            ->withNoCacheHeaders();
+    }
+
+    private function resolveCallbackStatusCode(array $result): int
+    {
+        if (($result['success'] ?? false) === true) {
+            return 200;
         }
 
-        return new OAuthCallbackResultResource($result);
+        return match ((string) data_get($result, 'error.code', 'server_error')) {
+            'invalid_state', 'invalid_response', 'invalid_user' => 422,
+            'provider_declined' => 400,
+            default => 500,
+        };
     }
 }

@@ -19,4 +19,5 @@ Route::get('/', function () {
 
 // Stable Google callback path used by OAuth provider settings.
 Route::get('/auth/oauth/callback', [\App\Http\Controllers\AuthController::class, 'handleGoogleOAuthCallback'])
+    ->middleware('oauth.callback.json_nocache')
     ->name('auth.oauth.google.callback');
